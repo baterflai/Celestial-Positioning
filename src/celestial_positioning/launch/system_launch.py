@@ -23,6 +23,7 @@ def generate_launch_description():
         parameters=[{
             'width': LaunchConfiguration('width'),
             'height': LaunchConfiguration('height'),
+            'format': 'RGB888',
         }],
         output='screen',
     )
