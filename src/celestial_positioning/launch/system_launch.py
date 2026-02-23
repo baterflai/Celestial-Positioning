@@ -20,6 +20,11 @@ def generate_launch_description():
         default_value='1080',
         description='Capture height in pixels',
     )
+    device_arg = DeclareLaunchArgument(
+        'device',
+        default_value='0',
+        description='V4L2 camera device index (/dev/videoN)',
+    )
 
     camera_node = Node(
         package='celestial_positioning',
@@ -29,6 +34,7 @@ def generate_launch_description():
             'publish_rate': LaunchConfiguration('publish_rate'),
             'width': LaunchConfiguration('width'),
             'height': LaunchConfiguration('height'),
+            'device': LaunchConfiguration('device'),
         }],
         output='screen',
     )
@@ -44,6 +50,7 @@ def generate_launch_description():
         publish_rate_arg,
         width_arg,
         height_arg,
+        device_arg,
         camera_node,
         feature_extractor_node,
     ])
