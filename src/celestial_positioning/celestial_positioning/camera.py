@@ -13,30 +13,31 @@ class CameraNode(Node):
         self.declare_parameter('publish_rate', 5.0)
         self.declare_parameter('width', 1920)
         self.declare_parameter('height', 1080)
-        self.declare_parameter('device', 0)
 
         rate = self.get_parameter('publish_rate').value
         width = self.get_parameter('width').value
         height = self.get_parameter('height').value
-        device = self.get_parameter('device').value
 
         self.publisher_ = self.create_publisher(Image, '/camera/image_raw', 10)
         self.bridge = CvBridge()
 
-        self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+        pipeline = (
+            f'libcamerasrc ! '
+            f'video/x-raw,width={width},height={height},framerate={int(rate)}/1 ! '
+            f'videoconvert ! '
+            f'video/x-raw,format=BGR ! '
+            f'appsink drop=1'
+        )
+        self.get_logger().info(f'Opening camera with GStreamer pipeline: {pipeline}')
+
+        self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         if not self.cap.isOpened():
-            self.get_logger().fatal(f'Failed to open camera device {device}')
-            raise RuntimeError(f'Cannot open /dev/video{device}')
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-
-        actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            self.get_logger().fatal('Failed to open camera via GStreamer/libcamera')
+            raise RuntimeError('Cannot open camera — is gstreamer1.0-libcamera installed?')
 
         self.timer = self.create_timer(1.0 / rate, self._capture_and_publish)
         self.get_logger().info(
-            f'Camera node started — publishing at {rate} Hz ({actual_w}x{actual_h})'
+            f'Camera node started — publishing at {rate} Hz ({width}x{height})'
         )
 
     def _capture_and_publish(self):
