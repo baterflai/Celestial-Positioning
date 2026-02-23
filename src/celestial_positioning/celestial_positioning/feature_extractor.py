@@ -14,6 +14,7 @@ class FeatureExtractorNode(Node):
             self._image_callback,
             10,
         )
+        self.subscription  # prevent unused variable warning
         self.frame_count = 0
         self.get_logger().info('Feature extractor node started — waiting for images…')
 

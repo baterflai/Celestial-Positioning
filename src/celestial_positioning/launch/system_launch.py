@@ -5,11 +5,6 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    publish_rate_arg = DeclareLaunchArgument(
-        'publish_rate',
-        default_value='5.0',
-        description='Camera capture and publish rate in Hz',
-    )
     width_arg = DeclareLaunchArgument(
         'width',
         default_value='1920',
@@ -22,11 +17,10 @@ def generate_launch_description():
     )
 
     camera_node = Node(
-        package='celestial_positioning',
+        package='camera_ros',
         executable='camera_node',
-        name='camera_node',
+        name='camera',
         parameters=[{
-            'publish_rate': LaunchConfiguration('publish_rate'),
             'width': LaunchConfiguration('width'),
             'height': LaunchConfiguration('height'),
         }],
@@ -41,7 +35,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        publish_rate_arg,
         width_arg,
         height_arg,
         camera_node,

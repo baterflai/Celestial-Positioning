@@ -22,7 +22,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'camera_node = celestial_positioning.camera:main',
             'feature_extractor_node = celestial_positioning.feature_extractor:main',
         ],
     },
