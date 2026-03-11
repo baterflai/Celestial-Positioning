@@ -146,3 +146,36 @@ cd ~/Celestial-Positioning
 colcon build --packages-select celestial_positioning
 source install/setup.bash
 ```
+
+## Running Individual Nodes
+
+### IMU Node
+
+```bash
+ros2 run celestial_positioning imu_node
+```
+
+With custom parameters:
+
+```bash
+ros2 run celestial_positioning imu_node --ros-args -p rate_hz:=50.0 -p i2c_bus:=1
+```
+
+## Echoing Topics
+
+```bash
+# IMU accelerometer + gyroscope
+ros2 topic echo /imu/data_raw
+
+# Magnetometer
+ros2 topic echo /imu/mag
+
+# Camera frames
+ros2 topic echo /camera/image_raw
+
+# List all active topics
+ros2 topic list
+
+# Check publish rate
+ros2 topic hz /imu/data_raw
+```
