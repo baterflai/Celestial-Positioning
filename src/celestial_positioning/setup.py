@@ -23,6 +23,8 @@ setup(
     entry_points={
         'console_scripts': [
             'feature_extractor_node = celestial_positioning.feature_extractor:main',
+            'camera_calibrator_node = celestial_positioning.camera_calibrator:main',
+            'imu_node = celestial_positioning.imu_node:main',
         ],
     },
 )
