@@ -193,8 +193,8 @@ class CalibratorState:
         # The MJPEG stream reads whichever is freshest
         self.corners_found = False
         self.current_corners = None
-        self.image_width = 1280
-        self.image_height = 720
+        self.image_width = 1456
+        self.image_height = 1088
         # Calibration captures
         self.captured_image_points = []
         self.captured_object_points = []
@@ -371,7 +371,7 @@ class CalibrationHTTPHandler(BaseHTTPRequestHandler):
         calibration = {
             'image_width': w,
             'image_height': h,
-            'camera_name': 'imx477',
+            'camera_name': 'imx296',
             'camera_matrix': {
                 'rows': 3, 'cols': 3,
                 'data': K.flatten().tolist(),

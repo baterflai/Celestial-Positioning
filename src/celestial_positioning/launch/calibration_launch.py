@@ -6,11 +6,11 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     width_arg = DeclareLaunchArgument(
-        'width', default_value='1280',
+        'width', default_value='1456',
         description='Capture width in pixels',
     )
     height_arg = DeclareLaunchArgument(
-        'height', default_value='720',
+        'height', default_value='1088',
         description='Capture height in pixels',
     )
     port_arg = DeclareLaunchArgument(
@@ -41,7 +41,7 @@ def generate_launch_description():
         parameters=[{
             'width': LaunchConfiguration('width'),
             'height': LaunchConfiguration('height'),
-            'format': 'RGB888',
+            'format': 'BGR888',
         }],
         output='screen',
     )
