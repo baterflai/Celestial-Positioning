@@ -6,32 +6,32 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     width_arg = DeclareLaunchArgument(
-        'width', default_value='1280',
+        'width', default_value='1456',
         description='Capture width in pixels',
     )
     height_arg = DeclareLaunchArgument(
-        'height', default_value='720',
+        'height', default_value='1088',
         description='Capture height in pixels',
     )
     port_arg = DeclareLaunchArgument(
         'web_port', default_value='8080',
         description='HTTP port for the calibration web UI',
     )
-    pattern_cols_arg = DeclareLaunchArgument(
-        'pattern_columns', default_value='7',
-        description='Inner corner count horizontally (squares - 1)',
+    grid_cols_arg = DeclareLaunchArgument(
+        'grid_cols', default_value='4',
+        description='AprilGrid columns (number of tags)',
     )
-    pattern_rows_arg = DeclareLaunchArgument(
-        'pattern_rows', default_value='9',
-        description='Inner corner count vertically (squares - 1)',
+    grid_rows_arg = DeclareLaunchArgument(
+        'grid_rows', default_value='6',
+        description='AprilGrid rows (number of tags)',
     )
-    square_size_arg = DeclareLaunchArgument(
-        'square_size', default_value='0.020',
-        description='Checkerboard square size in meters',
+    tag_size_arg = DeclareLaunchArgument(
+        'tag_size', default_value='0.030',
+        description='AprilTag size in meters',
     )
-    detection_scale_arg = DeclareLaunchArgument(
-        'detection_scale', default_value='0.5',
-        description='Scale factor for corner detection (0.25-1.0)',
+    tag_spacing_arg = DeclareLaunchArgument(
+        'tag_spacing', default_value='0.009',
+        description='Gap between tags in meters',
     )
 
     camera_node = Node(
@@ -41,7 +41,6 @@ def generate_launch_description():
         parameters=[{
             'width': LaunchConfiguration('width'),
             'height': LaunchConfiguration('height'),
-            'format': 'RGB888',
         }],
         output='screen',
     )
@@ -52,10 +51,10 @@ def generate_launch_description():
         name='camera_calibrator_node',
         parameters=[{
             'web_port': LaunchConfiguration('web_port'),
-            'pattern_columns': LaunchConfiguration('pattern_columns'),
-            'pattern_rows': LaunchConfiguration('pattern_rows'),
-            'square_size': LaunchConfiguration('square_size'),
-            'detection_scale': LaunchConfiguration('detection_scale'),
+            'grid_cols': LaunchConfiguration('grid_cols'),
+            'grid_rows': LaunchConfiguration('grid_rows'),
+            'tag_size': LaunchConfiguration('tag_size'),
+            'tag_spacing': LaunchConfiguration('tag_spacing'),
         }],
         output='screen',
     )
@@ -64,10 +63,10 @@ def generate_launch_description():
         width_arg,
         height_arg,
         port_arg,
-        pattern_cols_arg,
-        pattern_rows_arg,
-        square_size_arg,
-        detection_scale_arg,
+        grid_cols_arg,
+        grid_rows_arg,
+        tag_size_arg,
+        tag_spacing_arg,
         camera_node,
         calibrator_node,
     ])

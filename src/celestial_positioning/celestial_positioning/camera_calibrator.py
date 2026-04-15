@@ -8,6 +8,7 @@ from socketserver import ThreadingMixIn
 import cv2
 import numpy
 import rclpy
+from aprilgrid import Detector as AprilGridDetector
 import yaml
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -18,7 +19,7 @@ CALIBRATION_HTML = """<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Camera Calibration</title>
+<title>Camera Calibration (AprilGrid)</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -72,7 +73,7 @@ CALIBRATION_HTML = """<!DOCTYPE html>
 </style></head><body>
 <div class="container">
 <header>
-  <h1>Camera Calibration</h1>
+  <h1>Camera Calibration (AprilGrid)</h1>
   <span class="badge" id="liveBadge">Connecting...</span>
 </header>
 <div class="stream-wrap">
@@ -80,7 +81,7 @@ CALIBRATION_HTML = """<!DOCTYPE html>
 </div>
 <div class="stats">
   <div class="stat-card">
-    <div class="label">Corners Detected</div>
+    <div class="label">Tags Detected</div>
     <div class="value muted" id="detected">--</div>
   </div>
   <div class="stat-card">
@@ -126,7 +127,7 @@ function post(url) {
 function doCapture() {
   post('/capture').then(d => {
     if (d.error) log(d.error, 'err');
-    else log('Captured frame ' + d.captured, 'ok');
+    else log('Captured frame ' + d.captured + ' (' + d.tags + ' tags, ' + d.corners + ' corners)', 'ok');
   }).catch(() => log('Request failed', 'err'));
 }
 function doCalibrate() {
@@ -151,8 +152,8 @@ function doReset() {
 setInterval(() => {
   fetch('/status').then(r => r.json()).then(d => {
     const det = document.getElementById('detected');
-    det.textContent = d.corners_found ? 'Yes' : 'No';
-    det.className = 'value' + (d.corners_found ? ' green' : ' muted');
+    det.textContent = d.tags_found > 0 ? d.tags_found + '/' + d.total_tags : '--';
+    det.className = 'value' + (d.tags_found >= 4 ? ' green' : ' muted');
     document.getElementById('count').textContent = d.capture_count;
     const errEl = document.getElementById('error');
     if (d.reprojection_error !== null) {
@@ -167,7 +168,7 @@ setInterval(() => {
       document.getElementById('fps').className = 'value' + (fps > 0 ? '' : ' muted');
       lastFrameCount = d.frame_count; lastTime = now;
     }
-    document.getElementById('btnCapture').disabled = !d.corners_found;
+    document.getElementById('btnCapture').disabled = d.tags_found < 4;
     document.getElementById('btnCalibrate').disabled = d.capture_count < 5;
     document.getElementById('btnSave').disabled = !d.calibrated;
     const badge = document.getElementById('liveBadge');
@@ -184,31 +185,27 @@ class CalibratorState:
     def __init__(self):
         self.lock = threading.Lock()
         self.frame_condition = threading.Condition(self.lock)
-        # Raw BGR frame from camera (set by callback)
         self.bgr_frame = None
         self.frame_count = 0
-        # Pre-encoded JPEG for the stream (set by detection thread)
         self.stream_jpeg = None
         self.stream_seq = 0
-        # The MJPEG stream reads whichever is freshest
-        self.corners_found = False
-        self.current_corners = None
-        self.image_width = 1280
-        self.image_height = 720
+        # AprilTag detection results
+        self.tags_found = 0
+        self.total_tags = 24  # 4x6
+        self.current_obj_points = None
+        self.current_img_points = None
+        self.image_width = 1456
+        self.image_height = 1088
         # Calibration captures
         self.captured_image_points = []
         self.captured_object_points = []
         self.capture_count = 0
-        # Calibration results
+        # Results
         self.calibrated = False
         self.camera_matrix = None
         self.dist_coeffs = None
         self.reprojection_error = None
         # Config
-        self.pattern_cols = 7
-        self.pattern_rows = 9
-        self.square_size = 0.020
-        self.detection_scale = 0.25
         self.jpeg_quality = 70
         self.save_path = os.path.expanduser('~/camera_calibration.yaml')
 
@@ -265,7 +262,6 @@ class CalibrationHTTPHandler(BaseHTTPRequestHandler):
         try:
             while True:
                 with self.state.frame_condition:
-                    # Wait up to 500ms for a new frame instead of polling
                     self.state.frame_condition.wait_for(
                         lambda: self.state.stream_seq != last_seq
                         or self.state.stream_jpeg is not None,
@@ -288,7 +284,8 @@ class CalibrationHTTPHandler(BaseHTTPRequestHandler):
     def _serve_status(self):
         with self.state.lock:
             data = {
-                'corners_found': self.state.corners_found,
+                'tags_found': self.state.tags_found,
+                'total_tags': self.state.total_tags,
                 'capture_count': self.state.capture_count,
                 'frame_count': self.state.frame_count,
                 'calibrated': self.state.calibrated,
@@ -298,27 +295,32 @@ class CalibrationHTTPHandler(BaseHTTPRequestHandler):
 
     def _handle_capture(self):
         with self.state.lock:
-            if not self.state.corners_found or self.state.current_corners is None:
-                self._json_response(400, {'error': 'No checkerboard detected'})
+            if self.state.tags_found < 4:
+                self._json_response(400,
+                                    {'error': 'Need at least 4 tags visible'})
                 return
-            corners = self.state.current_corners.copy()
-            pcols = self.state.pattern_cols
-            prows = self.state.pattern_rows
-            sq = self.state.square_size
-
-        objp = numpy.zeros((prows * pcols, 3), numpy.float32)
-        objp[:, :2] = numpy.mgrid[
-            0:pcols, 0:prows].T.reshape(-1, 2) * sq
+            if self.state.current_obj_points is None:
+                self._json_response(400, {'error': 'No detections available'})
+                return
+            obj_pts = self.state.current_obj_points.copy()
+            img_pts = self.state.current_img_points.copy()
+            n_tags = self.state.tags_found
 
         with self.state.lock:
-            self.state.captured_object_points.append(objp)
-            self.state.captured_image_points.append(corners)
+            self.state.captured_object_points.append(obj_pts)
+            self.state.captured_image_points.append(img_pts)
             self.state.capture_count += 1
             count = self.state.capture_count
 
         if self.node_logger:
-            self.node_logger.info(f'Captured calibration frame {count}')
-        self._json_response(200, {'captured': count})
+            self.node_logger.info(
+                f'Captured frame {count} ({n_tags} tags, '
+                f'{len(img_pts)} corners)')
+        self._json_response(200, {
+            'captured': count,
+            'tags': int(n_tags),
+            'corners': len(img_pts),
+        })
 
     def _handle_calibrate(self):
         with self.state.lock:
@@ -335,8 +337,45 @@ class CalibrationHTTPHandler(BaseHTTPRequestHandler):
             self.node_logger.info(
                 f'Running calibration with {len(obj_pts)} frames...')
 
-        ret, camera_matrix, dist_coeffs, _, _ = cv2.calibrateCamera(
+        # Initial calibration
+        ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
             obj_pts, img_pts, img_size, None, None)
+
+        if self.node_logger:
+            self.node_logger.info(
+                f'Initial RMS: {ret:.4f} px over {len(obj_pts)} frames')
+
+        # Outlier rejection: remove frames with mean reprojection error
+        # above 2x the overall RMS, then recalibrate
+        max_iters = 3
+        for iteration in range(max_iters):
+            per_frame_err = []
+            for i in range(len(obj_pts)):
+                proj, _ = cv2.projectPoints(
+                    obj_pts[i], rvecs[i], tvecs[i],
+                    camera_matrix, dist_coeffs)
+                err = numpy.linalg.norm(
+                    proj.reshape(-1, 2) - img_pts[i].reshape(-1, 2),
+                    axis=1).mean()
+                per_frame_err.append(err)
+
+            threshold = 2.0 * ret
+            keep = [i for i, e in enumerate(per_frame_err)
+                    if e <= threshold]
+            removed = len(obj_pts) - len(keep)
+
+            if removed == 0 or len(keep) < 5:
+                break
+
+            if self.node_logger:
+                self.node_logger.info(
+                    f'Outlier pass {iteration + 1}: removed {removed} '
+                    f'frame(s), {len(keep)} remaining')
+
+            obj_pts = [obj_pts[i] for i in keep]
+            img_pts = [img_pts[i] for i in keep]
+            ret, camera_matrix, dist_coeffs, rvecs, tvecs =                 cv2.calibrateCamera(
+                    obj_pts, img_pts, img_size, None, None)
 
         with self.state.lock:
             self.state.calibrated = True
@@ -346,10 +385,12 @@ class CalibrationHTTPHandler(BaseHTTPRequestHandler):
 
         if self.node_logger:
             self.node_logger.info(
-                f'Calibration done. RMS error: {ret:.4f} px')
+                f'Calibration done. RMS: {ret:.4f} px '
+                f'({len(obj_pts)} frames kept)')
 
         self._json_response(200, {
             'reprojection_error': ret,
+            'frames_used': len(obj_pts),
             'camera_matrix': camera_matrix.tolist(),
             'dist_coeffs': dist_coeffs.flatten().tolist(),
         })
@@ -371,7 +412,7 @@ class CalibrationHTTPHandler(BaseHTTPRequestHandler):
         calibration = {
             'image_width': w,
             'image_height': h,
-            'camera_name': 'imx477',
+            'camera_name': 'imx296',
             'camera_matrix': {
                 'rows': 3, 'cols': 3,
                 'data': K.flatten().tolist(),
@@ -427,26 +468,30 @@ class CameraCalibratorNode(Node):
         super().__init__('camera_calibrator_node')
 
         self.declare_parameter('web_port', 8080)
-        self.declare_parameter('pattern_columns', 7)
-        self.declare_parameter('pattern_rows', 9)
-        self.declare_parameter('square_size', 0.020)
-        self.declare_parameter('detection_scale', 0.5)
+        self.declare_parameter('grid_cols', 4)
+        self.declare_parameter('grid_rows', 6)
+        self.declare_parameter('tag_size', 0.030)
+        self.declare_parameter('tag_spacing', 0.009)
         self.declare_parameter('jpeg_quality', 70)
         self.declare_parameter('save_path', '~/camera_calibration.yaml')
 
         self.state = CalibratorState()
-        self.state.pattern_cols = self.get_parameter(
-            'pattern_columns').value
-        self.state.pattern_rows = self.get_parameter(
-            'pattern_rows').value
-        self.state.square_size = self.get_parameter(
-            'square_size').value
-        self.state.detection_scale = self.get_parameter(
-            'detection_scale').value
-        self.state.jpeg_quality = self.get_parameter(
-            'jpeg_quality').value
+        grid_cols = self.get_parameter('grid_cols').value
+        grid_rows = self.get_parameter('grid_rows').value
+        tag_size = self.get_parameter('tag_size').value
+        tag_spacing = self.get_parameter('tag_spacing').value
+        self.state.total_tags = grid_cols * grid_rows
+        self.state.jpeg_quality = 95  # high quality for tag detection
+        # self.state.jpeg_quality = self.get_parameter('jpeg_quality').value
         self.state.save_path = os.path.expanduser(
             self.get_parameter('save_path').value)
+
+        # Set up AprilGrid detector (handles checkerboard-interleaved layout)
+        self.ag_detector = AprilGridDetector('t36h11')
+        self.grid_cols = grid_cols
+        self.grid_rows = grid_rows
+        self.tag_size = tag_size
+        self.tag_spacing = tag_spacing
 
         image_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -457,7 +502,6 @@ class CameraCalibratorNode(Node):
             Image, '/camera/image_raw',
             self._image_callback, image_qos)
 
-        # Single detection thread — also produces overlay JPEG
         self._detection_thread = threading.Thread(
             target=self._detection_loop, daemon=True)
         self._detection_thread.start()
@@ -474,52 +518,71 @@ class CameraCalibratorNode(Node):
         self.get_logger().info(
             f'Calibration UI at http://0.0.0.0:{port}')
         self.get_logger().info(
-            f'Pattern: {self.state.pattern_cols}x{self.state.pattern_rows}'
-            f' inner corners, {self.state.square_size * 1000:.0f}mm squares')
+            f'AprilGrid: {grid_cols}x{grid_rows} tags, '
+            f'tag={tag_size * 1000:.0f}mm, '
+            f'spacing={tag_spacing * 1000:.0f}mm, '
+            f'dict=t36h11')
 
     def _image_callback(self, msg):
-        # Convert raw ROS Image to BGR, encode JPEG for stream, share frame
         if self.state.frame_count == 0:
             self.get_logger().info(
                 f'First frame: encoding={msg.encoding}, '
                 f'size={msg.width}x{msg.height}, '
                 f'step={msg.step}, data_len={len(msg.data)}')
-        img = numpy.frombuffer(msg.data, dtype=numpy.uint8).reshape(
-            msg.height, msg.width, 3)
+
+        raw = numpy.frombuffer(msg.data, dtype=numpy.uint8)
         if msg.encoding in ('bgr8', 'BGR888'):
-            bgr = img
+            bgr = raw.reshape(msg.height, msg.width, 3)
+        elif msg.encoding in ('rgb8', 'RGB888'):
+            bgr = cv2.cvtColor(
+                raw.reshape(msg.height, msg.width, 3),
+                cv2.COLOR_RGB2BGR)
+        elif msg.encoding == 'nv21':
+            yuv = raw.reshape(msg.height * 3 // 2, msg.step)
+            bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV21)
+            bgr = bgr[:msg.height, :msg.width]
         else:
-            bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            bgr = raw.reshape(msg.height, msg.step)
+            bgr = bgr[:, :msg.width * 3].reshape(
+                msg.height, msg.width, 3)
+
         _, buf = cv2.imencode(
             '.jpg', bgr,
             [cv2.IMWRITE_JPEG_QUALITY, self.state.jpeg_quality])
         jpeg = buf.tobytes()
+
         with self.state.frame_condition:
             self.state.bgr_frame = bgr
             self.state.frame_count += 1
-            # Only update stream JPEG if detection hasn't provided an
-            # overlay for this frame (keeps stream running at camera rate)
-            if not self.state.corners_found:
+            if self.state.tags_found == 0:
                 self.state.stream_jpeg = jpeg
                 self.state.stream_seq += 1
             self.state.frame_condition.notify_all()
 
+    def _build_object_points(self, tag_id):
+        """Compute the 4 corner 3D positions for a given tag ID on the grid.
+        Corner order matches aprilgrid detector output."""
+        col = tag_id // self.grid_rows
+        row = tag_id % self.grid_rows
+        pitch = self.tag_size + self.tag_spacing
+        x0 = col * pitch
+        y0 = row * pitch
+        s = self.tag_size
+        return numpy.array([
+            [x0,     y0,     0],
+            [x0,     y0 + s, 0],
+            [x0 + s, y0 + s, 0],
+            [x0 + s, y0,     0],
+        ], dtype=numpy.float32)
+
     def _detection_loop(self):
-        """Detection loop that waits for new frames, runs corner
-        detection, and produces a JPEG for the stream."""
-        pattern = (self.state.pattern_cols, self.state.pattern_rows)
-        flags = (cv2.CALIB_CB_ADAPTIVE_THRESH
-                 | cv2.CALIB_CB_NORMALIZE_IMAGE)
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-                    30, 0.001)
-        scale = self.state.detection_scale
+        """Detect AprilTags using aprilgrid and extract corners."""
         quality = self.state.jpeg_quality
         encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
         last_frame_id = -1
 
         while rclpy.ok():
             try:
-                # Wait for a new frame instead of polling
                 with self.state.frame_condition:
                     self.state.frame_condition.wait_for(
                         lambda: self.state.frame_count != last_frame_id,
@@ -531,53 +594,55 @@ class CameraCalibratorNode(Node):
                 last_frame_id = fid
 
                 h, w = frame_bgr.shape[:2]
+                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
-                # Detect on downscaled grayscale
-                small = cv2.resize(frame_bgr, None, fx=scale, fy=scale,
-                                   interpolation=cv2.INTER_LINEAR)
-                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-
-                found, corners_small = cv2.findChessboardCorners(
-                    gray, pattern, flags)
+                detections = self.ag_detector.detect(gray)
+                n_tags = len(detections)
 
                 if fid % 30 == 0:
                     self.get_logger().info(
-                        f'Detection: frame={fid}, '
-                        f'input={w}x{h}, '
-                        f'scaled={gray.shape[1]}x{gray.shape[0]}, '
-                        f'pattern={pattern}, '
-                        f'found={found}')
+                        f'Detection: frame={fid}, {w}x{h}, '
+                        f'tags={n_tags}/{self.state.total_tags}')
 
-                corners_full = None
-                if found:
-                    corners_full = corners_small / scale
-                    gray_full = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-                    corners_full = cv2.cornerSubPix(
-                        gray_full, corners_full, (11, 11), (-1, -1),
-                        criteria)
-                    # Draw overlay on the frame
-                    annotated = frame_bgr.copy()
-                    cv2.drawChessboardCorners(
-                        annotated, pattern, corners_full, True)
-                    pts = corners_full.reshape(-1, 2)
-                    x0, y0 = pts.min(axis=0).astype(int)
-                    x1, y1 = pts.max(axis=0).astype(int)
-                    pad = 12
-                    cv2.rectangle(annotated, (x0 - pad, y0 - pad),
-                                  (x1 + pad, y1 + pad), (0, 200, 0), 2)
-                    _, buf = cv2.imencode('.jpg', annotated, encode_params)
-                    overlay_jpeg = buf.tobytes()
+                obj_pts = None
+                img_pts = None
+                if n_tags >= 4:
+                    obj_list = []
+                    img_list = []
+                    for det in detections:
+                        tid = int(det.tag_id)
+                        if tid < self.grid_cols * self.grid_rows:
+                            obj_list.append(self._build_object_points(tid))
+                            img_list.append(
+                                det.corners.reshape(4, 2).astype(numpy.float32))
+                    if len(obj_list) >= 4:
+                        obj_pts = numpy.vstack(obj_list).reshape(-1, 1, 3)
+                        img_pts = numpy.vstack(img_list).reshape(-1, 1, 2)
+
+                # Draw overlay
+                annotated = frame_bgr.copy()
+                for det in detections:
+                    pts = det.corners.reshape(4, 2).astype(int)
+                    for j in range(4):
+                        cv2.line(annotated, tuple(pts[j]),
+                                 tuple(pts[(j+1) % 4]), (0, 200, 0), 2)
+                    cx = int(pts[:, 0].mean())
+                    cy = int(pts[:, 1].mean())
+                    cv2.putText(annotated, str(int(det.tag_id)),
+                                (cx - 10, cy + 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                (0, 0, 255), 2)
+                _, buf = cv2.imencode('.jpg', annotated, encode_params)
+                overlay_jpeg = buf.tobytes()
 
                 with self.state.frame_condition:
-                    self.state.corners_found = found
-                    self.state.current_corners = corners_full
+                    self.state.tags_found = n_tags
+                    self.state.current_obj_points = obj_pts
+                    self.state.current_img_points = img_pts
                     self.state.image_width = w
                     self.state.image_height = h
-                    # Only push annotated overlay to the stream;
-                    # plain frames are handled by _image_callback
-                    if found:
-                        self.state.stream_jpeg = overlay_jpeg
-                        self.state.stream_seq += 1
+                    self.state.stream_jpeg = overlay_jpeg
+                    self.state.stream_seq += 1
                     self.state.frame_condition.notify_all()
 
             except Exception as e:
