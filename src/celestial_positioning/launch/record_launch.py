@@ -39,6 +39,20 @@ def generate_launch_description():
             'i2c_bus': 1,
             'rate_hz': 1.0,
             'frame_id': 'gps_link',
+            'chrony_shm_unit': 0,
+            'use_gps_time_in_header': True,
+        }],
+        output='screen',
+    )
+
+    exposure_ts_node = Node(
+        package='celestial_positioning',
+        executable='exposure_timestamp_node',
+        name='exposure_timestamp_node',
+        parameters=[{
+            'gpio_chip': 'gpiochip0',
+            'strobe_pin': 17,
+            'frame_id': 'camera_strobe',
         }],
         output='screen',
     )
@@ -63,6 +77,8 @@ def generate_launch_description():
             '/imu/mag',
             '/gps/fix',
             '/camera/image_raw',
+            '/camera/exposure_start',
+            '/camera/exposure_end',
         ],
         output='screen',
     )
@@ -71,6 +87,7 @@ def generate_launch_description():
         cal_file_arg,
         imu_node,
         gps_node,
+        exposure_ts_node,
         camera_node,
         bag_record,
     ])
