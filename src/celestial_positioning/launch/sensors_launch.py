@@ -46,12 +46,17 @@ def generate_launch_description():
     )
 
     camera_node = Node(
-        package='camera_ros',
-        executable='camera_node',
+        package='celestial_positioning',
+        executable='raw_camera_node',
         name='camera',
         parameters=[{
             'width': 1456,
             'height': 1088,
+            'frame_id': 'camera',
+            'auto_exposure': True,
+            'target_mean': 400.0,
+            'exposure_s': 0.033,
+            'gain': 0,
         }],
         output='screen',
     )

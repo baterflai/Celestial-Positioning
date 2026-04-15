@@ -28,6 +28,7 @@ setup(
             'imu_node = celestial_positioning.imu_node:main',
             'gps_node = celestial_positioning.gps_node:main',
             'exposure_timestamp_node = celestial_positioning.exposure_timestamp_node:main',
+            'raw_camera_node = celestial_positioning.raw_camera_node:main',
         ],
     },
 )

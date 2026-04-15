@@ -15,6 +15,8 @@ def generate_launch_description():
         cmd=[
             'ros2', 'bag', 'record',
             '--storage', 'mcap',
+            '--compression-mode', 'file',
+            '--compression-format', 'zstd',
             '--output', log_dir,
             '/imu/data_raw',
             '/imu/mag',
