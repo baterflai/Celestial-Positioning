@@ -2,71 +2,14 @@ import os
 from datetime import datetime
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch.actions import ExecuteProcess
 
 
 def generate_launch_description():
+    """Bag-only recorder. Subscribes to topics published by the
+    celestial_sensors and celestial_gps services which run at boot."""
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     log_dir = os.path.expanduser(f'~/logs/{timestamp}')
-
-    cal_file_arg = DeclareLaunchArgument(
-        'calibration_file',
-        default_value=os.path.expanduser(
-            '~/ros2_ws/src/celestial_positioning/config/imu_calibration.yaml'),
-        description='Path to IMU calibration YAML file',
-    )
-
-    imu_node = Node(
-        package='celestial_positioning',
-        executable='imu_node',
-        name='imu_node',
-        parameters=[{
-            'i2c_bus': 1,
-            'rate_hz': 100.0,
-            'frame_id': 'imu_link',
-            'calibration_file': LaunchConfiguration('calibration_file'),
-        }],
-        output='screen',
-    )
-
-    gps_node = Node(
-        package='celestial_positioning',
-        executable='gps_node',
-        name='gps_node',
-        parameters=[{
-            'i2c_bus': 1,
-            'rate_hz': 1.0,
-            'frame_id': 'gps_link',
-            'chrony_shm_unit': 0,
-            'use_gps_time_in_header': True,
-        }],
-        output='screen',
-    )
-
-    exposure_ts_node = Node(
-        package='celestial_positioning',
-        executable='exposure_timestamp_node',
-        name='exposure_timestamp_node',
-        parameters=[{
-            'gpio_chip': 'gpiochip0',
-            'strobe_pin': 17,
-            'frame_id': 'camera_strobe',
-        }],
-        output='screen',
-    )
-
-    camera_node = Node(
-        package='camera_ros',
-        executable='camera_node',
-        name='camera',
-        parameters=[{
-            'width': 1456,
-            'height': 1088,
-        }],
-        output='screen',
-    )
 
     bag_record = ExecuteProcess(
         cmd=[
@@ -83,11 +26,4 @@ def generate_launch_description():
         output='screen',
     )
 
-    return LaunchDescription([
-        cal_file_arg,
-        imu_node,
-        gps_node,
-        exposure_ts_node,
-        camera_node,
-        bag_record,
-    ])
+    return LaunchDescription([bag_record])
