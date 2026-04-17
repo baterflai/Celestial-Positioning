@@ -32,18 +32,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    exposure_ts_node = Node(
-        package='celestial_positioning',
-        executable='exposure_timestamp_node',
-        name='exposure_timestamp_node',
-        parameters=[{
-            'gpio_chip': 'gpiochip0',
-            'strobe_pin': 17,
-            'frame_id': 'camera_strobe',
-        }],
-        output='screen',
-    )
-
     camera_node = Node(
         package='celestial_positioning',
         executable='raw_camera_node',
@@ -62,6 +50,5 @@ def generate_launch_description():
 
     return LaunchDescription([
         imu_node,
-        exposure_ts_node,
         camera_node,
     ])

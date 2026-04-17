@@ -22,8 +22,6 @@ def generate_launch_description():
             '/imu/mag',
             '/gps/fix',
             '/camera/image_raw',
-            '/camera/exposure_start',
-            '/camera/exposure_end',
         ],
         output='screen',
     )
