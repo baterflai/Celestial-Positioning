@@ -89,11 +89,37 @@ class RawCameraNode(Node):
         set_sensor_controls(
             self.subdev_path, self.exposure_s, self.gain)
 
+        # Apply parameter changes live (exposure_s, gain, auto_exposure)
+        self.add_on_set_parameters_callback(self._on_param_change)
+
         self.get_logger().info(
             f'Raw camera node started: {self.width}x{self.height} mono10, '
             f'auto_exposure={self.auto_exposure}, '
             f'initial exposure={self.exposure_s*1000:.1f}ms '
             f'gain={self.gain}')
+
+    def _on_param_change(self, params):
+        """Apply live parameter updates to the sensor."""
+        from rcl_interfaces.msg import SetParametersResult
+        changed = False
+        for p in params:
+            if p.name == 'exposure_s':
+                self.exposure_s = float(p.value)
+                changed = True
+            elif p.name == 'gain':
+                self.gain = int(p.value)
+                changed = True
+            elif p.name == 'auto_exposure':
+                self.auto_exposure = bool(p.value)
+            elif p.name == 'target_mean':
+                self.target_mean = float(p.value)
+        if changed:
+            set_sensor_controls(
+                self.subdev_path, self.exposure_s, self.gain)
+            self.get_logger().info(
+                f'Applied: exposure={self.exposure_s*1000:.1f}ms '
+                f'gain={self.gain} ae={self.auto_exposure}')
+        return SetParametersResult(successful=True)
 
     def run(self):
         """Capture loop — runs in the main thread, not an executor."""
@@ -143,6 +169,9 @@ class RawCameraNode(Node):
                         self.exposure_s = new_exp
                         set_sensor_controls(
                             self.subdev_path, self.exposure_s, self.gain)
+
+                # Process pending parameter service calls without blocking
+                rclpy.spin_once(self, timeout_sec=0)
 
                 if frame_count % 30 == 0:
                     arr = np.frombuffer(bytes(data), dtype=np.uint16)
