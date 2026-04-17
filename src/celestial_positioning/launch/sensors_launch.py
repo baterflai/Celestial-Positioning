@@ -28,7 +28,6 @@ def generate_launch_description():
             'i2c_bus': 1,
             'rate_hz': 100.0,
             'frame_id': 'imu_link',
-            'calibration_file': LaunchConfiguration('calibration_file'),
         }],
         output='screen',
     )
@@ -62,7 +61,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        cal_file_arg,
         imu_node,
         exposure_ts_node,
         camera_node,
